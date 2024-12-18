@@ -1,0 +1,114 @@
+from Bio import SeqIO
+from Bio.Seq import Seq
+from Bio.SeqRecord import SeqRecord
+from Bio.Data import CodonTable
+import openpyxl
+
+# 读取序列文件（这里假设是FASTA格式）
+file_path = "F:\\Desktop\\respiratory syncytial virus\\0812-\\A\\A-L.fas"  # 修正文件路径
+sequences = list(SeqIO.parse(file_path, "fasta"))
+
+# 将所有序列转换为大写
+for seq_record in sequences:
+    seq_record.seq = Seq(str(seq_record.seq).upper())
+
+# 确保所有序列长度相同
+reference_seq = str(sequences[0].seq)
+if not all(len(seq) == len(reference_seq) for seq in sequences):
+    raise ValueError("All sequences must be the same length.")
+
+# 定义无效核苷酸集合
+invalid_nucleotides = {'N', 'Y', 'W', 'B', 'H', 'M', 'D'}
+
+# 寻找SNPs
+snps = {}
+for position in range(len(reference_seq)):
+    nucleotides = set(nuc for seq in sequences for nuc in seq[position])
+    if len(nucleotides) > 1:
+        snps[position] = nucleotides
+
+# 创建Excel工作簿和工作表
+wb = openpyxl.Workbook()
+ws = wb.active
+ws.title = "Mutations"
+
+# 设置标题行
+ws.append(["突变类型", "位点", "基因突变", "氨基酸变化", "突变率"])
+
+def translate_to_protein(seq, skip_invalid_codons=True):
+    codon_table = CodonTable.unambiguous_dna_by_name["Standard"]
+    protein_seq = []
+    for i in range(0, len(seq), 3):  # 每三个核苷酸一组
+        codon = seq[i:i+3]
+        if '-' in codon or codon not in codon_table.forward_table:
+            if skip_invalid_codons:
+                continue  # 跳过无法翻译的密码子
+            else:
+                protein_seq.append('?')  # 用'?'表示无法翻译的密码子
+        else:
+            try:
+                protein_seq.append(codon_table.forward_table[codon])
+            except KeyError:
+                # 如果密码子不在遗传密码表中，跳过它
+                continue
+    return ''.join(protein_seq)
+
+# 计算每个位点的突变计数
+mutation_counts = {position: {nuc: 0 for nuc in nucleotides} for position, nucleotides in snps.items()}
+total_sequences = len(sequences)
+
+for position, nucleotides in snps.items():
+    for seq in sequences:
+        if seq[position] in nucleotides:
+            mutation_counts[position][seq[position]] += 1
+
+# 遍历SNPs并写入Excel
+for position, nucleotides in snps.items():
+    wildtype_nucleotide = reference_seq[position]
+    for snp in nucleotides:
+        # 确保SNP不是无效核苷酸
+        if snp != wildtype_nucleotide and snp !='-' and snp not in invalid_nucleotides:
+            # 确定突变方向
+            mutation = f"{wildtype_nucleotide}→{snp}"
+            
+            # 创建突变序列记录
+            mutant_seq_str = reference_seq[:position] + snp + reference_seq[position+1:]
+            mutant_seq_record = SeqRecord(Seq(mutant_seq_str), id="mutant", description="")
+            
+            # 翻译野生型和突变型序列，跳过无效密码子
+            wildtype_seq = sequences[0].seq
+            wildtype_aa = translate_to_protein(wildtype_seq, skip_invalid_codons=True)
+            mutant_aa = translate_to_protein(mutant_seq_record.seq, skip_invalid_codons=True)
+            
+            # 确定突变位置的氨基酸
+            protein_position = position // 3
+            if protein_position < len(wildtype_aa):  # 确保不超出序列长度
+                wildtype_aa_at_position = wildtype_aa[protein_position]
+                try:
+                    mutant_aa_at_position = mutant_aa[protein_position]
+                except IndexError:
+                    # 如果突变导致序列长度变化，跳过这个突变
+                    continue
+
+                # 确定是否是非同义突变
+                if wildtype_aa_at_position != mutant_aa_at_position:
+                    mutation_type = "非同义突变"
+                    amino_acid_change = f"{wildtype_aa_at_position}变为了{mutant_aa_at_position}"
+                else:
+                    mutation_type = "同义突变"
+                    amino_acid_change = ""
+
+                # 计算突变率
+                mutation_rate = mutation_counts[position][snp] / total_sequences
+                #if mutation_rate < 0.01 or mutation_rate > 0.99:
+                    #mutation_rate = 0.0
+                #else:
+                mutation_rate = round(mutation_rate, 5)
+
+                # 写入Excel，位点加1
+                ws.append([mutation_type, position + 1, mutation, amino_acid_change, mutation_rate])
+
+# 保存Excel文件
+output_path = "F:\\Desktop\\respiratory syncytial virus\\0812-\\A\\A-L析.xlsx"
+wb.save(output_path)
+print(f"Excel文件已保存到：{output_path}")
