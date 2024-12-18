@@ -1,0 +1,50 @@
+setwd("F:\\Desktop\\respiratory syncytial virus\\NS1-修改中")
+len = 420
+mon = c("A-NS1")  ## 此处打开的文件为要分析的文件，不用加.fas
+stand = read.table("ANS1-420.fas", head = F, sep = ",")[2, 1]
+
+# 定义一个有效的碱基集合
+valid_bases = c("a", "t", "c", "g")
+
+for (i in 1:length(mon)) {
+    a = read.table(paste0(mon[i], ".fas"), head = F, sep = ",")
+    l = nrow(a)
+    p = seq(2, l, 2)
+    q = a[p, 1]
+    judge = rep(0, len)
+
+    for (j in 1:length(q)) {
+        for (k in 1:len) {
+            current_base = substring(q[j], k, k)
+            reference_base = substring(stand, k, k)
+            # 检查当前碱基是否有效且与参考位点不同
+            if (current_base %in% valid_bases && current_base != reference_base) {
+                # 检查是否连续6个或以上非有效碱基
+                non_valid_count = 0
+                for (m in max(1, k - 5):k) {
+                    if (!substring(q[j], m, m) %in% valid_bases) {
+                        non_valid_count = non_valid_count + 1
+                    }
+                }
+                # 如果连续6个或以上非有效碱基，则该位点不算作突变
+                if (non_valid_count < 6) {
+                    judge[k] = judge[k] + 1
+                }
+            }
+        }
+    }
+
+    mutation_rate = judge / length(q)  # 计算突变率
+    result = data.frame(position = 1:len, mutation = mutation_rate)  # 添加位点编号
+
+    # 将突变率大于0.99和小于0.01的值改为0
+    result$mutation[result$mutation >= 0.999 | result$mutation <= 0.001] <- 0
+
+    # 保存满足频率要求的位点
+    mutate = result[which(result$mutation > 0), ]  # 保存频率大于0的位点
+    write.table(mutate, paste0(mon[i], "-pos.txt"), row.names = F, col.names = F, sep = ",")
+
+    # 保存所有位点的突变率
+    write.table(result[, c("position", "mutation")], paste0(mon[i], "-mut1.csv"),
+                row.names = F, col.names = T, sep = ",")
+}
